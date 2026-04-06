@@ -1,8 +1,20 @@
 [package]
-name = "fluent_git"
+name = "path-opener"
 version = "0.1.0"
 edition = "2024"
+description = "Detects installed apps (editors, terminals, file managers) and opens paths with them. Cross-platform."
+license = "MIT"
+repository = "https://github.com/sksizer/rs-path-opener"
+homepage = "https://github.com/sksizer/rs-path-opener"
+readme = "README.md"
+keywords = ["open", "launch", "editor", "terminal", "cross-platform"]
+categories = ["os", "filesystem"]
 
 [dependencies]
-thiserror = "2.0.18"
-which = "8.0.2"
+serde = { version = "1", features = ["derive"] }
+dirs = "5"
+specta = { version = "=2.0.0-rc.22", features = ["derive"], optional = true }
+
+[features]
+default = []
+specta = ["dep:specta"]

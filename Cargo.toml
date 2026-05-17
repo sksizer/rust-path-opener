@@ -1,17 +1,18 @@
 [package]
 name = "path-opener"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
-description = "Detects installed apps (editors, terminals, file managers) and opens paths with them. Cross-platform."
+description = "Detects installed apps (editors, terminals, file managers, Markdown apps) and opens paths with them. Cross-platform."
 license = "MIT"
-repository = "https://github.com/sksizer/rs-path-opener"
-homepage = "https://github.com/sksizer/rs-path-opener"
+repository = "https://github.com/sksizer/rust-path-opener"
+homepage = "https://github.com/sksizer/rust-path-opener"
 readme = "README.md"
 keywords = ["open", "launch", "editor", "terminal", "cross-platform"]
 categories = ["os", "filesystem"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 dirs = "5"
 specta = { version = "=2.0.0-rc.22", features = ["derive"], optional = true }
 

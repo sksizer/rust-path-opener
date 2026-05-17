@@ -1,11 +1,17 @@
 //! Detect installed apps and open file paths with them, cross-platform.
 //!
-//! `path-opener` scans your system for known editors, terminals, and file managers,
-//! then lets you launch any of them on a given path. It handles macOS `.app` bundles,
-//! PATH lookups on Linux/Windows, and the platform-native "just open it" command.
+//! `path-opener` scans your system for known editors, terminals, file managers,
+//! and Markdown apps, then lets you launch any of them on a given path. It
+//! handles macOS `.app` bundles, PATH lookups on Linux/Windows, and the
+//! platform-native "just open it" command.
+//!
+//! Most apps launch with a simple `command + path` shell call. A few — notably
+//! Obsidian — need app-specific launch logic (URI schemes, vault lookup). For
+//! those, prefer [`open_with`] over [`open_path`].
 //!
 //! ```rust
-//! use path_opener::{detect_installed_apps, open_path, open_default};
+//! use std::path::Path;
+//! use path_opener::{detect_installed_apps, open_with, open_default};
 //!
 //! // See what's installed
 //! let apps = detect_installed_apps();
@@ -15,15 +21,24 @@
 //!     }
 //! }
 //!
-//! // Open a path with a specific app
-//! // open_path("code", "/my/project").unwrap();
+//! // Open a path with a detected app — honors per-app launch quirks
+//! // (e.g. Obsidian's URI scheme + vault discovery).
+//! // if let Some(vscode) = apps.iter().find(|a| a.app_id == "vscode" && a.is_available) {
+//! //     open_with(vscode, Path::new("/my/project")).unwrap();
+//! // }
 //!
 //! // Or just use the system default
 //! // open_default("/my/project").unwrap();
 //! ```
+//!
+//! See [`obsidian`] for vault-aware Obsidian launching (experimental).
 
 use serde::{Deserialize, Serialize};
 use std::io;
+use std::path::Path;
+use std::process::Command;
+
+pub mod obsidian;
 
 /// An app that can open file/directory paths.
 ///
@@ -78,6 +93,16 @@ struct KnownApp {
     app_id: &'static str,
     name: &'static str,
     platforms: &'static [PlatformEntry],
+    launch: Launch,
+}
+
+// How `open_with` should turn an opener + path into a Command.
+#[derive(Debug, Clone, Copy)]
+enum Launch {
+    // Default: split the platform's `command` on whitespace, append path as last arg.
+    Argv,
+    // Custom builder for apps that need more than argv-append (URI schemes, vault lookup, etc.).
+    Custom(fn(&Path) -> io::Result<Command>),
 }
 
 // Shorthand for apps that use the same command on every OS and are found via PATH.
@@ -91,6 +116,7 @@ macro_rules! cross_platform_app {
                 PlatformEntry { os: Os::Linux, command: $cmd, detection: Detection::PathLookup },
                 PlatformEntry { os: Os::Windows, command: $cmd, detection: Detection::PathLookup },
             ],
+            launch: Launch::Argv,
         }
     };
 }
@@ -106,6 +132,7 @@ macro_rules! cross_platform_app_with_mac_bundle {
                 PlatformEntry { os: Os::Linux, command: $cmd, detection: Detection::PathLookup },
                 PlatformEntry { os: Os::Windows, command: $cmd, detection: Detection::PathLookup },
             ],
+            launch: Launch::Argv,
         }
     };
 }
@@ -116,16 +143,19 @@ const KNOWN_APPS: &[KnownApp] = &[
         app_id: "finder",
         name: "Finder",
         platforms: &[PlatformEntry { os: Os::MacOS, command: "open", detection: Detection::AlwaysAvailable }],
+        launch: Launch::Argv,
     },
     KnownApp {
         app_id: "file-manager",
         name: "File Manager",
         platforms: &[PlatformEntry { os: Os::Linux, command: "xdg-open", detection: Detection::PathLookup }],
+        launch: Launch::Argv,
     },
     KnownApp {
         app_id: "explorer",
         name: "Explorer",
         platforms: &[PlatformEntry { os: Os::Windows, command: "explorer", detection: Detection::AlwaysAvailable }],
+        launch: Launch::Argv,
     },
     // -- Terminals --
     KnownApp {
@@ -136,6 +166,7 @@ const KNOWN_APPS: &[KnownApp] = &[
             command: "open -a Terminal",
             detection: Detection::MacAppBundle("Terminal.app"),
         }],
+        launch: Launch::Argv,
     },
     KnownApp {
         app_id: "iterm",
@@ -145,16 +176,19 @@ const KNOWN_APPS: &[KnownApp] = &[
             command: "open -a iTerm",
             detection: Detection::MacAppBundle("iTerm.app"),
         }],
+        launch: Launch::Argv,
     },
     KnownApp {
         app_id: "gnome-terminal",
         name: "GNOME Terminal",
         platforms: &[PlatformEntry { os: Os::Linux, command: "gnome-terminal", detection: Detection::PathLookup }],
+        launch: Launch::Argv,
     },
     KnownApp {
         app_id: "konsole",
         name: "Konsole",
         platforms: &[PlatformEntry { os: Os::Linux, command: "konsole", detection: Detection::PathLookup }],
+        launch: Launch::Argv,
     },
     KnownApp {
         app_id: "alacritty",
@@ -168,6 +202,7 @@ const KNOWN_APPS: &[KnownApp] = &[
             PlatformEntry { os: Os::Linux, command: "alacritty", detection: Detection::PathLookup },
             PlatformEntry { os: Os::Windows, command: "alacritty", detection: Detection::PathLookup },
         ],
+        launch: Launch::Argv,
     },
     KnownApp {
         app_id: "kitty",
@@ -176,16 +211,19 @@ const KNOWN_APPS: &[KnownApp] = &[
             PlatformEntry { os: Os::MacOS, command: "open -a Kitty", detection: Detection::MacAppBundle("kitty.app") },
             PlatformEntry { os: Os::Linux, command: "kitty", detection: Detection::PathLookup },
         ],
+        launch: Launch::Argv,
     },
     KnownApp {
         app_id: "windows-terminal",
         name: "Windows Terminal",
         platforms: &[PlatformEntry { os: Os::Windows, command: "wt", detection: Detection::PathLookup }],
+        launch: Launch::Argv,
     },
     KnownApp {
         app_id: "powershell",
         name: "PowerShell",
         platforms: &[PlatformEntry { os: Os::Windows, command: "pwsh", detection: Detection::PathLookup }],
+        launch: Launch::Argv,
     },
     // -- Editors (cross-platform) --
     cross_platform_app_with_mac_bundle!("vscode", "Visual Studio Code", "code", "Visual Studio Code.app"),
@@ -195,6 +233,21 @@ const KNOWN_APPS: &[KnownApp] = &[
     cross_platform_app!("neovim", "Neovim", "nvim"),
     cross_platform_app!("webstorm", "WebStorm", "webstorm"),
     cross_platform_app!("intellij", "IntelliJ IDEA", "idea"),
+    // -- Markdown --
+    KnownApp {
+        app_id: "obsidian",
+        name: "Obsidian",
+        platforms: &[
+            PlatformEntry {
+                os: Os::MacOS,
+                command: "open -a Obsidian",
+                detection: Detection::MacAppBundle("Obsidian.app"),
+            },
+            PlatformEntry { os: Os::Linux, command: "obsidian", detection: Detection::PathLookup },
+            PlatformEntry { os: Os::Windows, command: "obsidian", detection: Detection::PathLookup },
+        ],
+        launch: Launch::Custom(obsidian::build_command),
+    },
 ];
 
 fn current_os() -> Option<Os> {
@@ -318,21 +371,51 @@ pub fn open_default(path: &str) -> io::Result<()> {
     }
 }
 
-/// Open a path with a specific command.
+/// Open a path with a specific command string.
 ///
 /// Pass something like `"code"` or `"open -a iTerm"` — the command gets split
-/// on whitespace, and your path is tacked on as the last argument.
+/// on whitespace, and your path is tacked on as the last argument. This is a
+/// dumb argv-based launcher; it doesn't know about app-specific quirks (e.g.
+/// Obsidian's URI scheme). For those, use [`open_with`].
 pub fn open_path(command: &str, path: &str) -> io::Result<()> {
     let parts: Vec<&str> = command.split_whitespace().collect();
     if parts.is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty command string"));
     }
 
-    let mut cmd = std::process::Command::new(parts[0]);
+    let mut cmd = Command::new(parts[0]);
     for part in &parts[1..] {
         cmd.arg(part);
     }
     cmd.arg(path);
+    cmd.spawn()?;
+    Ok(())
+}
+
+/// Open `path` using a [`PathOpener`] returned from [`detect_installed_apps`].
+///
+/// Unlike [`open_path`], this honors per-app launch strategies — e.g. Obsidian
+/// is launched via its `obsidian://` URI scheme so the right vault and file
+/// open. For most apps the behavior is the same as [`open_path`].
+pub fn open_with(opener: &PathOpener, path: &Path) -> io::Result<()> {
+    let known = KNOWN_APPS.iter().find(|a| a.app_id == opener.app_id);
+    let launch = known.map(|a| a.launch).unwrap_or(Launch::Argv);
+
+    let mut cmd = match launch {
+        Launch::Custom(builder) => builder(path)?,
+        Launch::Argv => {
+            let parts: Vec<&str> = opener.command.split_whitespace().collect();
+            if parts.is_empty() {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty command string"));
+            }
+            let mut cmd = Command::new(parts[0]);
+            for part in &parts[1..] {
+                cmd.arg(part);
+            }
+            cmd.arg(path);
+            cmd
+        }
+    };
     cmd.spawn()?;
     Ok(())
 }

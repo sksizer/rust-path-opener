@@ -637,23 +637,12 @@ mod tests {
                     (true, FileSupport::Any)
                 }
                 // Obsidian
-                "obsidian" => {
-                    (true, FileSupport::Extensions(vec!["md".into(), "markdown".into(), "canvas".into()]))
-                }
+                "obsidian" => (true, FileSupport::Extensions(vec!["md".into(), "markdown".into(), "canvas".into()])),
                 other => panic!("unknown built-in {other:?} in audit table — please update the test"),
             };
 
-            assert_eq!(
-                app.accepts_directories, expected_accepts_dirs,
-                "{}: accepts_directories mismatch",
-                app.app_id,
-            );
-            assert_eq!(
-                app.file_support.to_owned(),
-                expected_file_support,
-                "{}: file_support mismatch",
-                app.app_id,
-            );
+            assert_eq!(app.accepts_directories, expected_accepts_dirs, "{}: accepts_directories mismatch", app.app_id,);
+            assert_eq!(app.file_support.to_owned(), expected_file_support, "{}: file_support mismatch", app.app_id,);
         }
     }
 

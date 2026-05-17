@@ -31,14 +31,15 @@
 //! // open_default("/my/project").unwrap();
 //! ```
 //!
-//! See [`obsidian`] for vault-aware Obsidian launching (experimental).
+//! Apps with non-CLI launch (Obsidian's `obsidian://` URI scheme, etc.) are
+//! dispatched internally — callers just hand path-opener a `(path, app_id)` pair.
 
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 use std::process::Command;
 
-pub mod obsidian;
+pub(crate) mod obsidian;
 
 /// An app that can open file/directory paths.
 ///

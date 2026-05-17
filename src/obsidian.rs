@@ -16,14 +16,18 @@ use std::process::Command;
 use serde::Deserialize;
 
 /// An Obsidian vault, as registered in Obsidian's config.
+///
+/// Crate-private: "vault" is Obsidian-domain terminology and intentionally
+/// absent from path-opener's public vocabulary.
 #[derive(Debug, Clone)]
-pub struct Vault {
+pub(crate) struct Vault {
     /// Internal ID Obsidian assigns. Stable across vault renames.
-    pub id: String,
+    #[allow(dead_code)]
+    pub(crate) id: String,
     /// Vault display name — basename of `path`. This is what `vault=` in URIs expects.
-    pub name: String,
+    pub(crate) name: String,
     /// Absolute path to the vault root directory.
-    pub path: PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -41,23 +45,19 @@ fn config_file() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("obsidian").join("obsidian.json"))
 }
 
-/// **Experimental.** List vaults Obsidian knows about on this machine.
+/// List vaults Obsidian knows about on this machine.
+///
+/// Crate-private: callers go through `open(path, "obsidian")`, which routes
+/// internally to [`build_command`] — they never see vault metadata directly.
 ///
 /// Reads `obsidian.json` from the user-config directory:
 /// - macOS: `~/Library/Application Support/obsidian/obsidian.json`
 /// - Linux: `~/.config/obsidian/obsidian.json`
 /// - Windows: `%APPDATA%\obsidian\obsidian.json`
 ///
-/// Returns an empty `Vec` if Obsidian isn't installed or has never been launched.
-///
-/// # Stability
-///
-/// **This API is experimental.** It is the first sketch of a more general
-/// "discover an app's project-like contexts" pattern (vaults for Obsidian,
-/// recent projects for JetBrains, workspaces for VSCode, etc.). Shape, naming,
-/// and module location may change before 1.0 — pin a minor version if you depend
-/// on it.
-pub fn discover_vaults() -> Vec<Vault> {
+/// Returns an empty `Vec` if Obsidian isn't installed, has never been launched,
+/// or `obsidian.json` is missing/unreadable/malformed.
+pub(crate) fn discover_vaults() -> Vec<Vault> {
     let Some(path) = config_file() else { return Vec::new() };
     let Ok(bytes) = std::fs::read(&path) else { return Vec::new() };
     let Ok(cfg) = serde_json::from_slice::<ObsidianConfig>(&bytes) else { return Vec::new() };

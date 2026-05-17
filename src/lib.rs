@@ -550,16 +550,64 @@ pub fn open_path(command: &str, path: &str) -> io::Result<()> {
 /// Open `path` using a [`PathOpener`] returned from [`detect_installed_apps`].
 ///
 /// Unlike [`open_path`], this honors per-app launch strategies — e.g. Obsidian
-/// is launched via its `obsidian://` URI scheme so the right vault and file
-/// open. For most apps the behavior is the same as [`open_path`].
+/// is launched via its `obsidian://` URI scheme. For most apps the behavior is
+/// the same as [`open_path`].
+///
+/// Prefer the higher-level [`open`] when you only have an `app_id`.
 pub fn open_with(opener: &PathOpener, path: &Path) -> io::Result<()> {
     let known = KNOWN_APPS.iter().find(|a| a.app_id == opener.app_id);
     let launch = known.map(|a| a.launch).unwrap_or(Launch::Argv);
+    spawn_for(launch, &opener.command, path)
+}
 
-    let mut cmd = match launch {
-        Launch::Custom(builder) => builder(path)?,
+/// Open `path` with the built-in opener identified by `app_id`.
+///
+/// This is the highest-level entry point: hand it a path and an app id
+/// (e.g. `"vscode"`, `"obsidian"`, `"finder"`), and it dispatches to the
+/// right launch strategy — argv-append for plain CLI apps, URI scheme for
+/// apps like Obsidian.
+///
+/// Returns `io::ErrorKind::NotFound` if no built-in matches `app_id`.
+///
+/// ```no_run
+/// use std::path::Path;
+///
+/// # fn main() -> std::io::Result<()> {
+/// path_opener::open(Path::new("/Users/me/notes"), "obsidian")?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn open(path: &Path, app_id: &str) -> io::Result<()> {
+    let Some(known) = KNOWN_APPS.iter().find(|a| a.app_id == app_id) else {
+        return Err(io::Error::new(io::ErrorKind::NotFound, format!("unknown app_id: {app_id}")));
+    };
+
+    let Some(os) = current_os() else {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "unsupported platform"));
+    };
+    let Some(entry) = known.platforms.iter().find(|p| p.os == os) else {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("app_id {app_id:?} has no entry for this platform"),
+        ));
+    };
+
+    spawn_for(known.launch, entry.command, path)
+}
+
+fn spawn_for(launch: Launch, command: &str, path: &Path) -> io::Result<()> {
+    let mut cmd = build_command_for(launch, command, path)?;
+    cmd.spawn()?;
+    Ok(())
+}
+
+// Construct (but do not spawn) the Command. Extracted so cfg(test) shims can
+// inspect what we'd run without launching a process.
+fn build_command_for(launch: Launch, command: &str, path: &Path) -> io::Result<Command> {
+    match launch {
+        Launch::Custom(builder) => builder(path),
         Launch::Argv => {
-            let parts: Vec<&str> = opener.command.split_whitespace().collect();
+            let parts: Vec<&str> = command.split_whitespace().collect();
             if parts.is_empty() {
                 return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty command string"));
             }
@@ -568,11 +616,9 @@ pub fn open_with(opener: &PathOpener, path: &Path) -> io::Result<()> {
                 cmd.arg(part);
             }
             cmd.arg(path);
-            cmd
+            Ok(cmd)
         }
-    };
-    cmd.spawn()?;
-    Ok(())
+    }
 }
 
 #[cfg(test)]

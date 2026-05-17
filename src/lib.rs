@@ -1,38 +1,4 @@
-//! Detect installed apps and open file paths with them, cross-platform.
-//!
-//! `path-opener` scans your system for known editors, terminals, file managers,
-//! and Markdown apps, then lets you launch any of them on a given path. It
-//! handles macOS `.app` bundles, PATH lookups on Linux/Windows, and the
-//! platform-native "just open it" command.
-//!
-//! Most apps launch with a simple `command + path` shell call. A few — notably
-//! Obsidian — need app-specific launch logic (URI schemes, vault lookup). For
-//! those, prefer [`open_with`] over [`open_path`].
-//!
-//! ```rust
-//! use std::path::Path;
-//! use path_opener::{detect_installed_apps, open_with, open_default};
-//!
-//! // See what's installed
-//! let apps = detect_installed_apps();
-//! for app in &apps {
-//!     if app.is_available {
-//!         println!("{} ({})", app.name, app.command);
-//!     }
-//! }
-//!
-//! // Open a path with a detected app — honors per-app launch quirks
-//! // (e.g. Obsidian's URI scheme + vault discovery).
-//! // if let Some(vscode) = apps.iter().find(|a| a.app_id == "vscode" && a.is_available) {
-//! //     open_with(vscode, Path::new("/my/project")).unwrap();
-//! // }
-//!
-//! // Or just use the system default
-//! // open_default("/my/project").unwrap();
-//! ```
-//!
-//! Apps with non-CLI launch (Obsidian's `obsidian://` URI scheme, etc.) are
-//! dispatched internally — callers just hand path-opener a `(path, app_id)` pair.
+#![doc = include_str!("../README.md")]
 
 use serde::{Deserialize, Serialize};
 use std::io;

@@ -318,6 +318,16 @@ const KNOWN_APPS: &[KnownApp] = &[
         accepts_directories: true,
         file_support: FileSupportSpec::NotSupported,
     },
+    // The `cmux` CLI opens a directory in a new workspace; the GUI app must be
+    // installed for the daemon to run. macOS only for now (see Info.plist).
+    KnownApp {
+        app_id: "cmux",
+        name: "cmux",
+        platforms: &[PlatformEntry { os: Os::MacOS, command: "cmux", detection: Detection::MacAppBundle("cmux.app") }],
+        launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::NotSupported,
+    },
     // -- Editors (cross-platform) --
     cross_platform_app_with_mac_bundle!(
         "vscode", "Visual Studio Code", "code", "Visual Studio Code.app",
@@ -629,9 +639,10 @@ mod tests {
             let (expected_accepts_dirs, expected_file_support): (bool, FileSupport) = match app.app_id {
                 // File managers / system defaults
                 "finder" | "file-manager" | "explorer" => (true, FileSupport::Any),
-                // Terminals: accept a directory to cd into, do not open files
+                // Terminals: accept a directory to cd into, do not open files.
+                // cmux is grouped here: `cmux <path>` opens a directory in a new workspace.
                 "terminal" | "iterm" | "gnome-terminal" | "konsole" | "alacritty" | "kitty" | "windows-terminal"
-                | "powershell" => (true, FileSupport::NotSupported),
+                | "powershell" | "cmux" => (true, FileSupport::NotSupported),
                 // Editors
                 "vscode" | "cursor" | "sublime-text" | "zed" | "neovim" | "webstorm" | "intellij" => {
                     (true, FileSupport::Any)

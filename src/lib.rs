@@ -41,10 +41,87 @@ use std::process::Command;
 
 pub(crate) mod obsidian;
 
+/// What kinds of files an opener accepts.
+///
+/// Use together with [`PathOpener::accepts_directories`] to decide which
+/// openers to show for a given path in your UI. Neither field is consulted
+/// by [`open`] itself — they are pure metadata for callers.
+///
+/// Extensions are stored without the leading dot and are matched
+/// case-insensitively against the path's extension via [`FileSupport::accepts_extension`].
+///
+/// # Examples
+///
+/// ```
+/// use path_opener::FileSupport;
+///
+/// // A general-purpose opener accepts any file.
+/// let editor = FileSupport::Any;
+/// assert!(editor.accepts_extension("rs"));
+///
+/// // A terminal does not open files at all.
+/// let terminal = FileSupport::NotSupported;
+/// assert!(!terminal.accepts_extension("rs"));
+///
+/// // A specialized opener accepts only certain extensions.
+/// let markdown = FileSupport::Extensions(vec!["md".into(), "markdown".into()]);
+/// assert!(markdown.accepts_extension("md"));
+/// assert!(markdown.accepts_extension("MD")); // case-insensitive
+/// assert!(!markdown.accepts_extension("txt"));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(tag = "kind", content = "extensions", rename_all = "snake_case")]
+pub enum FileSupport {
+    /// Opener accepts any file (general editors, file managers).
+    Any,
+    /// Opener does not open files (terminals).
+    NotSupported,
+    /// Opener accepts only files with one of the listed extensions
+    /// (without the leading dot, lowercase).
+    Extensions(Vec<String>),
+}
+
+impl FileSupport {
+    /// Returns `true` if a file with the given extension can be opened.
+    ///
+    /// `extension` should be the bare extension without a leading dot
+    /// (e.g. `"md"`, not `".md"`). The match is case-insensitive.
+    pub fn accepts_extension(&self, extension: &str) -> bool {
+        match self {
+            FileSupport::Any => true,
+            FileSupport::NotSupported => false,
+            FileSupport::Extensions(xs) => xs.iter().any(|x| x.eq_ignore_ascii_case(extension)),
+        }
+    }
+}
+
+// Internal sibling of `FileSupport` used inside the static `KNOWN_APPS` table.
+// Consts can't allocate, so the registry uses `&'static [&'static str]`; we
+// convert to the owned public `FileSupport` at `detect_installed_apps` time.
+#[derive(Debug, Clone, Copy)]
+enum FileSupportSpec {
+    Any,
+    NotSupported,
+    Extensions(&'static [&'static str]),
+}
+
+impl FileSupportSpec {
+    fn to_owned(self) -> FileSupport {
+        match self {
+            FileSupportSpec::Any => FileSupport::Any,
+            FileSupportSpec::NotSupported => FileSupport::NotSupported,
+            FileSupportSpec::Extensions(xs) => FileSupport::Extensions(xs.iter().map(|s| (*s).to_string()).collect()),
+        }
+    }
+}
+
 /// An app that can open file/directory paths.
 ///
 /// You get these from [`detect_installed_apps`]. Each one tells you the app's
-/// name, the shell command to invoke it, and whether it's actually installed.
+/// name, the shell command to invoke it, whether it's actually installed, and
+/// what shape of path it accepts (`accepts_directories` + `file_support`).
+///
 /// The `is_default`, `is_hidden`, and `sort_order` fields are there for you to
 /// manage user preferences on top — they always start as false/None.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +135,10 @@ pub struct PathOpener {
     pub command: String,
     /// `true` if we detected it on this machine.
     pub is_available: bool,
+    /// Whether this opener can open a directory path.
+    pub accepts_directories: bool,
+    /// What files this opener accepts. See [`FileSupport`].
+    pub file_support: FileSupport,
     /// For your UI — mark one as the user's preferred default.
     pub is_default: bool,
     /// For your UI — let users hide openers they don't care about.
@@ -78,6 +159,7 @@ enum Os {
 #[allow(dead_code)]
 enum Detection {
     AlwaysAvailable,            // Ships with the OS (Finder, Explorer)
+    AlwaysUnavailable,          // Detection not yet implemented for this OS
     MacAppBundle(&'static str), // Look for Foo.app in /Applications
     PathLookup,                 // `which`/`where` on PATH
 }
@@ -95,6 +177,8 @@ struct KnownApp {
     name: &'static str,
     platforms: &'static [PlatformEntry],
     launch: Launch,
+    accepts_directories: bool,
+    file_support: FileSupportSpec,
 }
 
 // How `open_with` should turn an opener + path into a Command.
@@ -107,8 +191,16 @@ enum Launch {
 }
 
 // Shorthand for apps that use the same command on every OS and are found via PATH.
+// Every built-in must declare `accepts_directories` and `file_support` explicitly —
+// silent defaults are how registries drift.
 macro_rules! cross_platform_app {
-    ($id:expr, $name:expr, $cmd:expr) => {
+    (
+        $id:expr,
+        $name:expr,
+        $cmd:expr,
+        accepts_directories: $accepts_dirs:expr,
+        file_support: $file_support:expr $(,)?
+    ) => {
         KnownApp {
             app_id: $id,
             name: $name,
@@ -118,13 +210,22 @@ macro_rules! cross_platform_app {
                 PlatformEntry { os: Os::Windows, command: $cmd, detection: Detection::PathLookup },
             ],
             launch: Launch::Argv,
+            accepts_directories: $accepts_dirs,
+            file_support: $file_support,
         }
     };
 }
 
 // Same thing but with a macOS .app bundle check instead of PATH on mac.
 macro_rules! cross_platform_app_with_mac_bundle {
-    ($id:expr, $name:expr, $cmd:expr, $bundle:expr) => {
+    (
+        $id:expr,
+        $name:expr,
+        $cmd:expr,
+        $bundle:expr,
+        accepts_directories: $accepts_dirs:expr,
+        file_support: $file_support:expr $(,)?
+    ) => {
         KnownApp {
             app_id: $id,
             name: $name,
@@ -134,6 +235,8 @@ macro_rules! cross_platform_app_with_mac_bundle {
                 PlatformEntry { os: Os::Windows, command: $cmd, detection: Detection::PathLookup },
             ],
             launch: Launch::Argv,
+            accepts_directories: $accepts_dirs,
+            file_support: $file_support,
         }
     };
 }
@@ -145,20 +248,27 @@ const KNOWN_APPS: &[KnownApp] = &[
         name: "Finder",
         platforms: &[PlatformEntry { os: Os::MacOS, command: "open", detection: Detection::AlwaysAvailable }],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::Any,
     },
     KnownApp {
         app_id: "file-manager",
         name: "File Manager",
         platforms: &[PlatformEntry { os: Os::Linux, command: "xdg-open", detection: Detection::PathLookup }],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::Any,
     },
     KnownApp {
         app_id: "explorer",
         name: "Explorer",
         platforms: &[PlatformEntry { os: Os::Windows, command: "explorer", detection: Detection::AlwaysAvailable }],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::Any,
     },
     // -- Terminals --
+    // Terminals accept a directory to cd into, but do not open files.
     KnownApp {
         app_id: "terminal",
         name: "Terminal",
@@ -168,6 +278,8 @@ const KNOWN_APPS: &[KnownApp] = &[
             detection: Detection::MacAppBundle("Terminal.app"),
         }],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::NotSupported,
     },
     KnownApp {
         app_id: "iterm",
@@ -178,18 +290,24 @@ const KNOWN_APPS: &[KnownApp] = &[
             detection: Detection::MacAppBundle("iTerm.app"),
         }],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::NotSupported,
     },
     KnownApp {
         app_id: "gnome-terminal",
         name: "GNOME Terminal",
         platforms: &[PlatformEntry { os: Os::Linux, command: "gnome-terminal", detection: Detection::PathLookup }],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::NotSupported,
     },
     KnownApp {
         app_id: "konsole",
         name: "Konsole",
         platforms: &[PlatformEntry { os: Os::Linux, command: "konsole", detection: Detection::PathLookup }],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::NotSupported,
     },
     KnownApp {
         app_id: "alacritty",
@@ -204,6 +322,8 @@ const KNOWN_APPS: &[KnownApp] = &[
             PlatformEntry { os: Os::Windows, command: "alacritty", detection: Detection::PathLookup },
         ],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::NotSupported,
     },
     KnownApp {
         app_id: "kitty",
@@ -213,27 +333,54 @@ const KNOWN_APPS: &[KnownApp] = &[
             PlatformEntry { os: Os::Linux, command: "kitty", detection: Detection::PathLookup },
         ],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::NotSupported,
     },
     KnownApp {
         app_id: "windows-terminal",
         name: "Windows Terminal",
         platforms: &[PlatformEntry { os: Os::Windows, command: "wt", detection: Detection::PathLookup }],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::NotSupported,
     },
     KnownApp {
         app_id: "powershell",
         name: "PowerShell",
         platforms: &[PlatformEntry { os: Os::Windows, command: "pwsh", detection: Detection::PathLookup }],
         launch: Launch::Argv,
+        accepts_directories: true,
+        file_support: FileSupportSpec::NotSupported,
     },
     // -- Editors (cross-platform) --
-    cross_platform_app_with_mac_bundle!("vscode", "Visual Studio Code", "code", "Visual Studio Code.app"),
-    cross_platform_app_with_mac_bundle!("cursor", "Cursor", "cursor", "Cursor.app"),
-    cross_platform_app_with_mac_bundle!("sublime-text", "Sublime Text", "subl", "Sublime Text.app"),
-    cross_platform_app_with_mac_bundle!("zed", "Zed", "zed", "Zed.app"),
-    cross_platform_app!("neovim", "Neovim", "nvim"),
-    cross_platform_app!("webstorm", "WebStorm", "webstorm"),
-    cross_platform_app!("intellij", "IntelliJ IDEA", "idea"),
+    cross_platform_app_with_mac_bundle!(
+        "vscode", "Visual Studio Code", "code", "Visual Studio Code.app",
+        accepts_directories: true, file_support: FileSupportSpec::Any,
+    ),
+    cross_platform_app_with_mac_bundle!(
+        "cursor", "Cursor", "cursor", "Cursor.app",
+        accepts_directories: true, file_support: FileSupportSpec::Any,
+    ),
+    cross_platform_app_with_mac_bundle!(
+        "sublime-text", "Sublime Text", "subl", "Sublime Text.app",
+        accepts_directories: true, file_support: FileSupportSpec::Any,
+    ),
+    cross_platform_app_with_mac_bundle!(
+        "zed", "Zed", "zed", "Zed.app",
+        accepts_directories: true, file_support: FileSupportSpec::Any,
+    ),
+    cross_platform_app!(
+        "neovim", "Neovim", "nvim",
+        accepts_directories: true, file_support: FileSupportSpec::Any,
+    ),
+    cross_platform_app!(
+        "webstorm", "WebStorm", "webstorm",
+        accepts_directories: true, file_support: FileSupportSpec::Any,
+    ),
+    cross_platform_app!(
+        "intellij", "IntelliJ IDEA", "idea",
+        accepts_directories: true, file_support: FileSupportSpec::Any,
+    ),
     // -- Markdown --
     KnownApp {
         app_id: "obsidian",
@@ -244,10 +391,14 @@ const KNOWN_APPS: &[KnownApp] = &[
                 command: "open -a Obsidian",
                 detection: Detection::MacAppBundle("Obsidian.app"),
             },
-            PlatformEntry { os: Os::Linux, command: "obsidian", detection: Detection::PathLookup },
-            PlatformEntry { os: Os::Windows, command: "obsidian", detection: Detection::PathLookup },
+            // TODO: Linux/Windows Obsidian detection — currently reports unavailable.
+            // See task 2026-05-16-path-opener-uri-scheme-and-obsidian (Out of scope).
+            PlatformEntry { os: Os::Linux, command: "obsidian", detection: Detection::AlwaysUnavailable },
+            PlatformEntry { os: Os::Windows, command: "obsidian", detection: Detection::AlwaysUnavailable },
         ],
         launch: Launch::Custom(obsidian::build_command),
+        accepts_directories: true,
+        file_support: FileSupportSpec::Extensions(&["md", "markdown", "canvas"]),
     },
 ];
 
@@ -311,6 +462,7 @@ fn is_command_available(command: &str) -> bool {
 fn check_availability(detection: &Detection) -> bool {
     match detection {
         Detection::AlwaysAvailable => true,
+        Detection::AlwaysUnavailable => false,
         #[cfg(target_os = "macos")]
         Detection::MacAppBundle(bundle) => is_macos_app_installed(bundle),
         #[cfg(not(target_os = "macos"))]
@@ -344,6 +496,8 @@ pub fn detect_installed_apps() -> Vec<PathOpener> {
                 name: app.name.to_string(),
                 command: entry.command.to_string(),
                 is_available,
+                accepts_directories: app.accepts_directories,
+                file_support: app.file_support.to_owned(),
                 is_default: false,
                 is_hidden: false,
                 sort_order: None,
@@ -453,5 +607,65 @@ mod tests {
     fn open_path_rejects_empty_command() {
         let result = open_path("", "/tmp");
         assert!(result.is_err());
+    }
+
+    // Audit: every built-in declares the expected (accepts_directories, file_support)
+    // shape per the registry's category. If you add a new built-in, add it here.
+    #[test]
+    fn every_known_app_declares_expected_metadata() {
+        for app in KNOWN_APPS {
+            let (expected_accepts_dirs, expected_file_support): (bool, FileSupport) = match app.app_id {
+                // File managers / system defaults
+                "finder" | "file-manager" | "explorer" => (true, FileSupport::Any),
+                // Terminals: accept a directory to cd into, do not open files
+                "terminal" | "iterm" | "gnome-terminal" | "konsole" | "alacritty" | "kitty" | "windows-terminal"
+                | "powershell" => (true, FileSupport::NotSupported),
+                // Editors
+                "vscode" | "cursor" | "sublime-text" | "zed" | "neovim" | "webstorm" | "intellij" => {
+                    (true, FileSupport::Any)
+                }
+                // Obsidian
+                "obsidian" => {
+                    (true, FileSupport::Extensions(vec!["md".into(), "markdown".into(), "canvas".into()]))
+                }
+                other => panic!("unknown built-in {other:?} in audit table — please update the test"),
+            };
+
+            assert_eq!(
+                app.accepts_directories, expected_accepts_dirs,
+                "{}: accepts_directories mismatch",
+                app.app_id,
+            );
+            assert_eq!(
+                app.file_support.to_owned(),
+                expected_file_support,
+                "{}: file_support mismatch",
+                app.app_id,
+            );
+        }
+    }
+
+    #[test]
+    fn detected_openers_carry_metadata() {
+        let apps = detect_installed_apps();
+        for app in &apps {
+            // Sanity check that the fields are populated on the public struct,
+            // not just on the internal table.
+            let known = KNOWN_APPS.iter().find(|k| k.app_id == app.app_id).expect("registered");
+            assert_eq!(app.accepts_directories, known.accepts_directories);
+            assert_eq!(app.file_support, known.file_support.to_owned());
+        }
+    }
+
+    #[test]
+    fn file_support_accepts_extension_is_case_insensitive() {
+        let fs = FileSupport::Extensions(vec!["md".into(), "canvas".into()]);
+        assert!(fs.accepts_extension("md"));
+        assert!(fs.accepts_extension("MD"));
+        assert!(fs.accepts_extension("Md"));
+        assert!(fs.accepts_extension("canvas"));
+        assert!(!fs.accepts_extension("txt"));
+        assert!(FileSupport::Any.accepts_extension("anything"));
+        assert!(!FileSupport::NotSupported.accepts_extension("md"));
     }
 }

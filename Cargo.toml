@@ -1,6 +1,6 @@
 [package]
 name = "path-opener"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Detects installed apps (editors, terminals, file managers, Markdown apps) and opens paths with them. Cross-platform."
 license = "MIT"

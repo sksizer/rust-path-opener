@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-05-19
+
+### Added
+
+- new `preview_command(path, app_id) -> io::Result<CommandPreview>` public API that returns the program + argv `open()` would spawn, without spawning anything. Use case: surfacing the effective command in a UI ("copy effective command") or logging it before launching.
+- new public `CommandPreview { program: String, args: Vec<String> }` struct. Derives `specta::Type` behind the existing `specta` feature flag, mirroring `FileSupport` and `PathOpener`.
+
+### Compatibility
+
+Additive only — no breaking changes. `open()`, `open_with()`, `open_path()`, `open_default()`, and `detect_installed_apps()` are unchanged.
+
 ## [0.2.1] - 2026-05-17
 
 ### Added

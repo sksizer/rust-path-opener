@@ -571,6 +571,61 @@ pub fn open(path: &Path, app_id: &str) -> io::Result<()> {
     spawn_for(known.launch, entry.command, path)
 }
 
+/// What `open` would spawn for a given path + `app_id`, without actually
+/// spawning it. Useful when you want to surface the effective command in
+/// a UI ("copy effective command") or log it before launching.
+///
+/// The `program` is the command name as passed to `std::process::Command::new`;
+/// `args` is the argv list (excluding `program`). On Obsidian-style launches,
+/// `program` will be the platform URI launcher (`open` / `xdg-open` / `cmd`)
+/// and `args` will end with the `obsidian://…` URI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+pub struct CommandPreview {
+    /// The program name as passed to `Command::new`.
+    pub program: String,
+    /// The argv list (does not include `program`).
+    pub args: Vec<String>,
+}
+
+/// Return what [`open`] would spawn, without spawning anything.
+///
+/// Errors mirror [`open`]:
+/// - `io::ErrorKind::NotFound` if `app_id` is not a known built-in.
+/// - `io::ErrorKind::Unsupported` if the app has no entry for the current platform.
+/// - Any error returned by the underlying command builder (rare — only for
+///   `Launch::Custom` builders that themselves fail).
+///
+/// ```no_run
+/// use std::path::Path;
+///
+/// # fn main() -> std::io::Result<()> {
+/// let preview = path_opener::preview_command(Path::new("/Users/me/notes"), "vscode")?;
+/// println!("{} {:?}", preview.program, preview.args);
+/// # Ok(())
+/// # }
+/// ```
+pub fn preview_command(path: &Path, app_id: &str) -> io::Result<CommandPreview> {
+    let Some(known) = KNOWN_APPS.iter().find(|a| a.app_id == app_id) else {
+        return Err(io::Error::new(io::ErrorKind::NotFound, format!("unknown app_id: {app_id}")));
+    };
+
+    let Some(os) = current_os() else {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "unsupported platform"));
+    };
+    let Some(entry) = known.platforms.iter().find(|p| p.os == os) else {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("app_id {app_id:?} has no entry for this platform"),
+        ));
+    };
+
+    let cmd = build_command_for(known.launch, entry.command, path)?;
+    let program = cmd.get_program().to_string_lossy().into_owned();
+    let args = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+    Ok(CommandPreview { program, args })
+}
+
 fn spawn_for(launch: Launch, command: &str, path: &Path) -> io::Result<()> {
     let mut cmd = build_command_for(launch, command, path)?;
     cmd.spawn()?;
@@ -679,5 +734,41 @@ mod tests {
         assert!(!fs.accepts_extension("txt"));
         assert!(FileSupport::Any.accepts_extension("anything"));
         assert!(!FileSupport::NotSupported.accepts_extension("md"));
+    }
+
+    #[test]
+    fn preview_command_for_argv_app_returns_program_and_path() {
+        // `vscode` uses Launch::Argv on every supported platform with command "code".
+        // The argv we'd run is exactly: code <path>.
+        let path = Path::new("/tmp/path-opener-preview-argv");
+        let preview = preview_command(path, "vscode").expect("preview_command for vscode");
+        assert_eq!(preview.program, "code", "argv launches use the registered command as program");
+        assert_eq!(preview.args.last().map(String::as_str), Some("/tmp/path-opener-preview-argv"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn preview_command_for_obsidian_returns_uri() {
+        use std::env;
+        use std::fs;
+
+        // canonicalize requires the path to exist, so set up a real dir first.
+        let tmp = env::temp_dir().join(format!("path-opener-preview-obsidian-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).expect("create tmp dir");
+
+        let preview = preview_command(&tmp, "obsidian").expect("preview_command for obsidian");
+        assert_eq!(preview.program, "open", "macOS Obsidian launches via `open <uri>`");
+        let last = preview.args.last().expect("at least one arg");
+        assert!(last.starts_with("obsidian://open?"), "last arg should be obsidian URI, got: {last}");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn preview_command_for_unknown_app_id_returns_not_found() {
+        let err = preview_command(Path::new("/tmp/anything"), "definitely-not-a-real-app-id")
+            .expect_err("unknown app_id must error");
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 }

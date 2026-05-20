@@ -1,0 +1,16 @@
+filters:
+  and:
+    - file.inFolder("planning/epics")
+    - file.ext != "base"
+views:
+  - type: table
+    name: All epics
+    order:
+      - status
+      - target_date
+      - last_reviewed
+      - id
+      - file.name
+    sort:
+      - property: status
+        direction: ASC

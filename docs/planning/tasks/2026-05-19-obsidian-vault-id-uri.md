@@ -1,7 +1,7 @@
 ---
 type: task
 schema_version: 1
-status: in-progress
+status: closed/done
 created: '2026-05-19'
 last_reviewed: '2026-05-20'
 readiness_verified_at: '2026-05-20T04:37:11Z'
@@ -12,6 +12,11 @@ tags:
 - obsidian
 - uri
 related: []
+completion_note: |
+  Shipped via #13 (path-opener 0.4.0). Obsidian URIs now emit
+  `vault=<id>` using the stable internal identifier; duplicate-named
+  vaults route deterministically. Plugin-side automation gaps that
+  surfaced during the run are tracked in sksizer/dev#42.
 ---
 # Emit Obsidian URIs using internal vault id (0.4)
 

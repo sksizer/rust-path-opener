@@ -1,9 +1,9 @@
 ---
 type: task
 schema_version: 1
-status: open/ready
+status: in-progress
 created: '2026-05-19'
-last_reviewed: '2026-05-19'
+last_reviewed: '2026-05-20'
 impact: high
 complexity: small
 tags:

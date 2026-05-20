@@ -195,3 +195,15 @@ _Captured by /sdlc:task-work on 2026-05-20. PR: pending._
 - Spec said "drop `#[allow(dead_code)]` on `Vault.id`" but didn't address what happens to `Vault.name` once it's no longer read by production code. Had to make a judgment call (kept the field, moved the attribute) — a one-line note in the spec about the symmetric handling would have removed the decision.
 - Project's `just setup-worktree` recipe doesn't exist (skill assumes a JS-flavored repo with pnpm + lefthook). For pure-Rust projects this step is a no-op. The skill could detect repo language and skip the init block when it doesn't apply, or split into a "JS init" sub-step that runs conditionally.
 - The base session started with a pre-existing `M CHANGELOG.md` on main from an unrelated edit. The worktree branched from the committed state and was unaffected, but the leftover modification is still sitting in the main working tree and will need separate attention.
+
+### Spawned follow-up tasks
+
+Plugin-side gaps were filed as draft tasks in `sksizer/dev` (the plugin repo), not in this project. Tracked via PR https://github.com/sksizer/dev/pull/42:
+
+- `2026-05-20-setup-obsidian-backlog-dir-mismatch` — fix `/sdlc:setup --obsidian` writing into singular `backlog/` dir.
+- `2026-05-20-task-work-rebase-frontmatter-conflict` — eliminate Step 5b's deterministic rebase conflict.
+- `2026-05-20-task-work-worktree-init-language-agnostic` — make Step 4's init block conditional on project type so it no-ops on pure-Rust repos.
+
+Project-internal items not promoted to tasks:
+- Spec gap re: `Vault.name` once `id` becomes load-bearing — handled inline by keeping `name` with `#[allow(dead_code)]` (it's still used by test fixtures and remains useful for diagnostics).
+- Leftover `M CHANGELOG.md` on main from a prior session — unrelated to this work, will need a separate cleanup pass.

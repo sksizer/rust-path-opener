@@ -425,7 +425,7 @@ const KNOWN_APPS: &[KnownApp] = &[
         editor: None,
     },
     // -- Editors (cross-platform) --
-    // The four GUI editors carry an `EditorLaunch`: on macOS they launch via
+    // The four GUI editors carry an `Editor`: on macOS they launch via
     // `open -a` (their CLI shim is unreliable on PATH) and they can jump to a
     // `Target` line/column through their resolved CLI. VS Code / Cursor take
     // `--goto file:line:col`; Sublime / Zed take a `file:line:col` suffix.

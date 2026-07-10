@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-07-09
+
+### Fixed
+
+- macOS: GUI editors (VS Code, Cursor, Sublime Text, Zed) are detected by their `.app` bundle but were launched via their CLI shim (`code`, `subl`, …). That shim is frequently not on PATH — and a GUI-launched process inherits a stripped PATH — so `open`/`open_with` could fail with `NotFound` (`os error 2`) for an app that detection reported as available. They now launch via `open -a "<App Name>"` (LaunchServices, PATH-independent). Reported against the [Annado](https://github.com/ABeehive/Annado/pull/21) integration.
+
+### Added
+
+- `open_at(path, app_id, &Target)` — open a file and navigate to a location inside it. Honored by the GUI editors that accept a `Target` (VS Code, Cursor, Sublime Text, Zed) via their CLI (`--goto file:line:col` or a `file:line:col` suffix); every other opener ignores the target and opens the path normally.
+- `Target { line: Option<u32>, column: Option<u32> }` — a bundle of "sub-application markers", with `Target::line(n)` and `Target::at(line, col)` constructors. This is the extension point for future markers: new coordinates become new fields, not a new `open_*` function per coordinate. Derives `specta::Type` behind the `specta` feature.
+- `PathOpener.accepts_target: bool` — whether an opener honors a `Target`. Lets callers find jump-capable editors instead of hardcoding a list.
+- `preview_command_at(path, app_id, &Target)` — the `Target`-aware companion to `preview_command`.
+- For `open_at` on macOS, the editor CLI is resolved from inside the app bundle first (PATH-independent), then PATH, falling back to a marker-less `open -a` if neither resolves.
+
+### Compatibility
+
+- `PathOpener` gained `accepts_target: bool` — hand-built `PathOpener` literals must fill it in.
+- macOS `open`/`open_with`/`preview_command` now spawn `open -a "<App Name>"` for the GUI editors instead of the bare CLI. Behavior is more robust; the effective argv changed.
+
 ## [0.4.0] - 2026-05-20
 
 ### Changed

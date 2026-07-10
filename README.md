@@ -8,7 +8,7 @@ Hand it a `(path, app_id)` and it figures out the rest -- including app-specific
 
 ```toml
 [dependencies]
-path-opener = "0.2"
+path-opener = "0.5"
 ```
 
 ## Quickstart
@@ -91,15 +91,48 @@ fn openers_for(path: &Path) -> Vec<PathOpener> {
 The public surface is small on purpose:
 
 - `open(path, app_id)` -- primary dispatch; resolves the built-in opener and launches.
+- `open_at(path, app_id, &Target)` -- like `open`, but navigates to a location inside the file (see [Targets](#targets-jump-to-a-line)).
 - `open_default(path)` -- system default ("just open it"), like a double-click.
 - `open_with(opener, path)` -- lower-level form when you already hold a `PathOpener`.
+- `preview_command(path, app_id)` / `preview_command_at(path, app_id, &Target)` -- what `open`/`open_at` would spawn, without spawning it.
 - `detect_installed_apps() -> Vec<PathOpener>` -- registry walk.
-- `PathOpener { app_id, name, command, is_available, accepts_directories, file_support, is_default, is_hidden, sort_order }`.
+- `PathOpener { app_id, name, command, is_available, accepts_directories, file_support, accepts_target, is_default, is_hidden, sort_order }`.
 - `enum FileSupport { Any, NotSupported, Extensions(Vec<String>) }`.
+- `struct Target { line: Option<u32>, column: Option<u32> }` with `Target::line(n)` / `Target::at(line, col)`.
 
 (`open_path(command, path)` from `0.1.x` is still present as a primitive that takes a raw command string; prefer `open(path, app_id)` for new code.)
 
-URI schemes, vault metadata, and per-app launch strategies are implementation details -- they do not appear on the public API.
+URI schemes, vault metadata, CLI-shim resolution, and per-app launch strategies are implementation details -- they do not appear on the public API.
+
+## Targets: jump to a line
+
+`open_at(path, app_id, &Target)` opens a file and navigates to a location inside it. A `Target` is a small bundle of "sub-application markers":
+
+```rust,no_run
+use std::path::Path;
+use path_opener::{open_at, Target};
+
+# fn main() -> std::io::Result<()> {
+open_at(Path::new("/src/main.rs"), "vscode", &Target::line(42))?;
+open_at(Path::new("/src/main.rs"), "zed", &Target::at(42, 8))?; // line + column
+# Ok(())
+# }
+```
+
+Targets are honored by the GUI editors that can jump to a spot inside a file -- **VS Code, Cursor, Sublime Text, Zed** -- via their CLI (`--goto file:line:col` or a `file:line:col` suffix). Check `PathOpener::accepts_target` to know which detected openers qualify, instead of hardcoding a list:
+
+```rust
+use path_opener::detect_installed_apps;
+
+let jump_capable: Vec<_> =
+    detect_installed_apps().into_iter().filter(|a| a.is_available && a.accepts_target).collect();
+```
+
+Any opener that doesn't understand a marker (a terminal, a file manager, Obsidian) ignores it and just opens the path -- so `open_at` is always safe to call. `Target` is the extension point for future markers: new coordinates become new fields, not a new function per coordinate.
+
+## macOS launching
+
+On macOS the GUI editors are detected by their `.app` bundle but ship a CLI shim (`code`, `subl`, …) that is often not symlinked onto PATH -- and a GUI-launched process inherits a stripped PATH anyway. So a plain `open`/`open_with` launches these editors through `open -a "<App Name>"` (LaunchServices, PATH-independent) rather than the bare shim. `open_at` still needs the shim to pass the line, so it resolves the shim from inside the app bundle first, then PATH, and falls back to a marker-less `open -a` if neither resolves.
 
 ## Obsidian (experimental)
 
@@ -140,6 +173,7 @@ let opener = PathOpener {
     is_available: true,
     accepts_directories: true,
     file_support: FileSupport::Any,
+    accepts_target: true,      // honors a Target (line/column) — see below
     is_default: false,         // for your UI to manage
     is_hidden: false,          // for your UI to manage
     sort_order: None,          // for your UI to manage
@@ -151,6 +185,12 @@ The `is_default`, `is_hidden`, and `sort_order` fields are always initialized to
 ## Features
 
 - **`specta`** -- Derives `specta::Type` on `PathOpener` and `FileSupport` for TypeScript binding generation. Off by default.
+
+## Migration from 0.4.x
+
+- `PathOpener` gained `accepts_target: bool`. Code that constructs `PathOpener` literals by hand needs to fill it in (`true` only for VS Code, Cursor, Sublime Text, Zed).
+- macOS launch behavior changed: `open`/`open_with` now launch the GUI editors via `open -a "<App Name>"` instead of their CLI shim. This fixes spurious `NotFound` (`os error 2`) failures when the shim isn't on PATH. `preview_command` reflects the new argv.
+- New, additive: `open_at`, `preview_command_at`, and the `Target` type. Existing calls are unaffected.
 
 ## Migration from 0.1.x
 

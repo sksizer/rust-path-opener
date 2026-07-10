@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.0] - 2026-07-09
 
 ### Fixed
 
@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - `PathOpener` gained `accepts_target: bool` — hand-built `PathOpener` literals must fill it in.
 - macOS `open`/`open_with`/`preview_command` now spawn `open -a "<App Name>"` for the GUI editors instead of the bare CLI. Behavior is more robust; the effective argv changed.
+
+## [0.4.0] - 2026-05-20
+
+### Changed
+
+- **BREAKING-IF-OBSERVED:** Obsidian URIs now use the vault's internal id (`vault=<id>`) instead of the basename (`vault=<name>`). Behavior is identical when vault names are unique; for users with duplicate-named vaults (e.g. `~/work/notes` and `~/personal/notes`), the launch is now deterministic — Obsidian previously picked one of the colliding vaults non-deterministically. Downstream consumers that scrape the URI (via `preview_command` or otherwise) may need to update if they were parsing `vault=` as a human-readable name.
 
 ## [0.3.0] - 2026-05-19
 

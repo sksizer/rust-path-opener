@@ -4,9 +4,13 @@
 //! CLI. This module reads Obsidian's own config to discover vaults, then assembles
 //! the right URI based on what `path` it's handed:
 //!
-//! - vault root → `obsidian://open?vault=<Name>`
-//! - file inside a vault → `obsidian://open?vault=<Name>&file=<relative>`
+//! - vault root → `obsidian://open?vault=<id>`
+//! - file inside a vault → `obsidian://open?vault=<id>&file=<relative>`
 //! - anything else → `obsidian://open?path=<absolute>` (Obsidian decides)
+//!
+//! `vault=<id>` uses Obsidian's stable internal vault identifier rather than
+//! the folder basename, so launches stay deterministic when two registered
+//! vaults share a basename (e.g. `~/work/notes` and `~/personal/notes`).
 
 use std::collections::HashMap;
 use std::io;
@@ -21,10 +25,13 @@ use serde::Deserialize;
 /// absent from path-opener's public vocabulary.
 #[derive(Debug, Clone)]
 pub(crate) struct Vault {
-    /// Internal ID Obsidian assigns. Stable across vault renames.
-    #[allow(dead_code)]
+    /// Internal ID Obsidian assigns. Stable across vault renames; emitted in
+    /// `vault=<id>` URIs so launches stay deterministic when two registered
+    /// vaults share a folder basename.
     pub(crate) id: String,
-    /// Vault display name — basename of `path`. This is what `vault=` in URIs expects.
+    /// Vault display name — basename of `path`. Retained for diagnostic context
+    /// and test fixtures; URIs use `id` instead (see module docs).
+    #[allow(dead_code)]
     pub(crate) name: String,
     /// Absolute path to the vault root directory.
     pub(crate) path: PathBuf,
@@ -80,19 +87,19 @@ pub(crate) fn build_command(path: &Path) -> io::Result<Command> {
 /// Pure URI-building logic, factored out for testability.
 ///
 /// Walks the strategy ladder:
-/// 1. `path` matches a known vault root → `obsidian://open?vault=<Name>`
-/// 2. `path` lives inside a known vault → `obsidian://open?vault=<Name>&file=<rel>`
+/// 1. `path` matches a known vault root → `obsidian://open?vault=<id>`
+/// 2. `path` lives inside a known vault → `obsidian://open?vault=<id>&file=<rel>`
 /// 3. Otherwise → `obsidian://open?path=<abs>`
 fn build_uri(path: &Path, vaults: &[Vault]) -> io::Result<String> {
     let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
     if let Some(v) = vaults.iter().find(|v| v.path == abs) {
-        return Ok(format!("obsidian://open?vault={}", encode(&v.name)));
+        return Ok(format!("obsidian://open?vault={}", encode(&v.id)));
     }
 
     if let Some((v, rel)) = vaults.iter().find_map(|v| abs.strip_prefix(&v.path).ok().map(|r| (v, r))) {
         let rel_str = rel.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-utf8 path"))?;
-        return Ok(format!("obsidian://open?vault={}&file={}", encode(&v.name), encode(rel_str)));
+        return Ok(format!("obsidian://open?vault={}&file={}", encode(&v.id), encode(rel_str)));
     }
 
     let abs_str = abs.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-utf8 path"))?;
@@ -213,7 +220,7 @@ mod tests {
         let vaults = vec![Vault { id: "v1".into(), name: "MyVault".into(), path: vault_dir.clone() }];
 
         let uri = build_uri(&vault_dir, &vaults).expect("build_uri");
-        assert_eq!(uri, "obsidian://open?vault=MyVault");
+        assert_eq!(uri, "obsidian://open?vault=v1");
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -228,7 +235,33 @@ mod tests {
         let vaults = vec![Vault { id: "v1".into(), name: "Notes".into(), path: vault_dir.clone() }];
 
         let uri = build_uri(&file, &vaults).expect("build_uri");
-        assert_eq!(uri, "obsidian://open?vault=Notes&file=sub%2Fnote.md");
+        assert_eq!(uri, "obsidian://open?vault=v1&file=sub%2Fnote.md");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn uri_disambiguates_vaults_with_identical_basename() {
+        // Two vaults legitimately register with the same folder basename — e.g.
+        // `~/work/notes` and `~/personal/notes`. Pre-0.4, both produced
+        // `vault=notes` and Obsidian picked one non-deterministically. Emitting
+        // `vault=<id>` makes the launch deterministic.
+        let tmp = env::temp_dir().join(format!("path-opener-test-vault-dupe-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let work = make_real_dir(&tmp.join("work"), "notes");
+        let personal = make_real_dir(&tmp.join("personal"), "notes");
+
+        let vaults = vec![
+            Vault { id: "work-id".into(), name: "notes".into(), path: work.clone() },
+            Vault { id: "personal-id".into(), name: "notes".into(), path: personal.clone() },
+        ];
+
+        let uri_work = build_uri(&work, &vaults).expect("build_uri work");
+        let uri_personal = build_uri(&personal, &vaults).expect("build_uri personal");
+
+        assert_eq!(uri_work, "obsidian://open?vault=work-id");
+        assert_eq!(uri_personal, "obsidian://open?vault=personal-id");
+        assert_ne!(uri_work, uri_personal, "duplicate-name vaults must produce distinct URIs");
 
         let _ = fs::remove_dir_all(&tmp);
     }

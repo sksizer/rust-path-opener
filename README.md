@@ -8,7 +8,7 @@ Hand it a `(path, app_id)` and it figures out the rest -- including app-specific
 
 ```toml
 [dependencies]
-path-opener = "0.4"
+path-opener = "0.5"
 ```
 
 ## Quickstart
@@ -186,7 +186,7 @@ The `is_default`, `is_hidden`, and `sort_order` fields are always initialized to
 
 - **`specta`** -- Derives `specta::Type` on `PathOpener` and `FileSupport` for TypeScript binding generation. Off by default.
 
-## Migration from 0.3.x
+## Migration from 0.4.x
 
 - `PathOpener` gained `accepts_target: bool`. Code that constructs `PathOpener` literals by hand needs to fill it in (`true` only for VS Code, Cursor, Sublime Text, Zed).
 - macOS launch behavior changed: `open`/`open_with` now launch the GUI editors via `open -a "<App Name>"` instead of their CLI shim. This fixes spurious `NotFound` (`os error 2`) failures when the shim isn't on PATH. `preview_command` reflects the new argv.

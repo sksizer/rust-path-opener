@@ -1,0 +1,14 @@
+# Releases are fully automated by release-plz running in CI — see RELEASE.md.
+# Mirrors the setup proven in sksizer/rust-ontogen.
+[workspace]
+# Use the existing git-cliff config for changelogs
+changelog_config = "cliff.toml"
+pr_name = "chore: release"
+# Run semver-checks before publishing
+semver_check = true
+# Create a GitHub release when the release PR merges
+git_release_enable = true
+# Publish to crates.io when the release PR is merged
+publish = true
+# Verify the package builds from a clean tree before publishing
+publish_allow_dirty = false
